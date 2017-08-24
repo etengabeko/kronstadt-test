@@ -30,8 +30,8 @@ BigNumber::BigNumber(const QString& numStr) :
     {
         bool isNegative = numStr.startsWith('-');
 
-        m_sign = isNegative ? Negative
-                            : Positive;
+        m_sign = isNegative ? Sign::Negative
+                            : Sign::Positive;
 
         m_digits.fill(0, numStr.size());
         for (int i = 0, sz = numStr.size(); i < sz; ++i)
@@ -57,8 +57,13 @@ BigNumber::BigNumber(const QString& numStr) :
 
 void BigNumber::trim()
 {
-    QVector<quint8>::iterator first = m_digits.begin(),
-                              last  = m_digits.end()-1;
+    trim(m_digits);
+}
+
+void BigNumber::trim(QVector<quint8>& target)
+{
+    QVector<quint8>::iterator first = target.begin(),
+                              last  = target.end()-1;
     while (first != last)
     {
         if (*first == 0)
@@ -70,8 +75,30 @@ void BigNumber::trim()
             break;
         }
     }
-    m_digits.erase(m_digits.begin(), first);
-    m_digits.squeeze();
+    target.erase(target.begin(), first);
+    target.squeeze();
+}
+
+void BigNumber::expand(int size)
+{
+    expand(m_digits, size);
+}
+
+void BigNumber::expand(QVector<quint8>& target, int size)
+{
+    if (target.size() < size)
+    {
+        QVector<quint8> copy;
+        copy.fill(0, size);
+
+        QVector<quint8>::iterator dest = copy.end() - target.size();
+        for (auto first = target.cbegin(), last = target.cend(); first != last; ++first)
+        {
+            *(dest++) = *first;
+        }
+
+        std::swap(copy, target);
+    }
 }
 
 BigNumber BigNumber::fromString(const QString& numStr, bool* ok)
@@ -101,13 +128,14 @@ BigNumber BigNumber::fromString(const QString& numStr, bool* ok)
 QString BigNumber::toString() const
 {
     QString result;
+
     if (isZero())
     {
         result = QString::number(0);
     }
     else
     {
-        bool isNegative = m_sign == Negative;
+        bool isNegative = (m_sign == Sign::Negative);
         result.reserve(m_digits.size() + (isNegative ? 1 : 0));
 
         if (isNegative)
@@ -128,6 +156,53 @@ bool BigNumber::isZero() const
 {
     return (   m_digits.size() == 1
             && m_digits.first() == 0);
+}
+
+BigNumber BigNumber::operator+ (BigNumber rhs) const
+{
+    return rhs += *this;
+}
+
+BigNumber& BigNumber::operator+= (const BigNumber& rhs)
+{
+    if (rhs.isZero())
+    {
+        return *this;
+    }
+    else if (isZero())
+    {
+        *this = rhs;
+        return *this;
+    }
+    else if (   m_digits == rhs.m_digits
+             && m_sign != rhs.m_sign)
+    {
+        *this = BigNumber();
+        return *this;
+    }
+    else if (m_digits.size() > rhs.m_digits.size())
+    {
+        *this = *this + rhs;
+        return *this;
+    }
+
+    expand(rhs.m_digits.size());
+
+    if (m_sign == rhs.m_sign)
+    {
+        m_digits = addition(m_digits, rhs.m_digits);
+    }
+    else
+    {
+        bool rhsIsGreater = signIgnoreLess(rhs);
+        m_digits = rhsIsGreater ? difference(rhs.m_digits, m_digits)
+                                : difference(m_digits, rhs.m_digits);
+        m_sign = rhsIsGreater ? rhs.m_sign
+                              : m_sign;
+    }
+
+    trim();
+    return *this;
 }
 
 bool BigNumber::signIgnoreLess(const BigNumber& rhs) const
@@ -151,100 +226,86 @@ bool BigNumber::signIgnoreLess(const BigNumber& rhs) const
     return false;
 }
 
-BigNumber BigNumber::operator+ (const BigNumber& rhs) const
+QVector<quint8> BigNumber::addition(const QVector<quint8>& first,
+                                    const QVector<quint8>& second)
 {
-    if (isZero())
-    {
-        return rhs;
-    }
-    else if (rhs.isZero())
-    {
-        return *this;
-    }
-    else if (   m_digits == rhs.m_digits
-             && m_sign != rhs.m_sign)
-    {
-        return BigNumber();
-    }
+    Q_ASSERT(first.size() == second.size());
+    const int size = first.size();
 
-    BigNumber result;
-    result.m_digits.fill(0, 1 + std::max(m_digits.size(), rhs.m_digits.size()));
-
-    bool rhsIsGreater = signIgnoreLess(rhs);
-    const QVector<quint8>& first  = rhsIsGreater ? rhs.m_digits
-                                                 : m_digits;
-    QVector<quint8> second = rhsIsGreater ? m_digits
-                                          : rhs.m_digits;
-    expand(second, first.size());
+    QVector<quint8> result;
+    result.fill(0, size+1);
 
     quint8 reminder = 0;
-    for (int i = first.size()-1; i >= 0; --i)
+    for (int i = size-1; i >= 0; --i)
     {
-        if (m_sign == rhs.m_sign)
-        {
-            quint8 sum = first[i] + second[i] + reminder;
-            reminder = sum / 10;
-            result.m_digits[i+1] = sum % 10;
-        }
-        else
-        {
-            qint8 diff = first[i] - second[i] - reminder;
-            reminder = (diff < 0) ? 1 : 0;
-            if (diff < 0)
-            {
-                diff += 10;
-            }
-            result.m_digits[i+1] = diff;
-        }
+        quint8 sum = first[i] + second[i] + reminder;
+        reminder = sum / 10;
+        result[i+1] = sum % 10;
     }
-    result.m_digits[0] = reminder;
-    result.m_sign = rhsIsGreater ? rhs.m_sign
-                                 : m_sign;
-
-    result.trim();
+    result[0] = reminder;
 
     return result;
 }
 
-void BigNumber::expand(int size)
+QVector<quint8> BigNumber::difference(const QVector<quint8>& greater,
+                                      const QVector<quint8>& lesser)
 {
-    expand(m_digits, size);
-}
+    Q_ASSERT(greater.size() == lesser.size());
+    const int size = greater.size();
 
-void BigNumber::expand(QVector<quint8>& target, int size)
-{
-    if (target.size() < size)
+    QVector<quint8> result;
+    result.fill(0, size);
+
+    quint8 reminder = 0;
+    for (int i = size-1; i >= 0; --i)
     {
-        QVector<quint8> copy;
-        copy.fill(0, size);
-        QVector<quint8>::iterator dest = copy.end() - target.size();
-        for (QVector<quint8>::const_iterator first = target.cbegin(), last = target.cend(); first != last; ++first)
+        qint8 diff = greater[i] - lesser[i] - reminder;
+        reminder = (diff < 0) ? 1 : 0;
+        if (diff < 0)
         {
-            *(dest++) = *first;
+            diff += 10;
         }
-        std::swap(copy, target);
+        result[i] = diff;
     }
+    Q_ASSERT(reminder == 0);
+
+    return result;
 }
 
-BigNumber BigNumber::operator- (const BigNumber& rhs) const
+BigNumber BigNumber::operator- (BigNumber rhs) const
 {
-    Q_UNUSED(rhs);
-    throw Exception(QCoreApplication::tr("Operator - is not implemented is base class BigNumber."));
-    return BigNumber();
+    return rhs -= *this;
 }
 
-BigNumber BigNumber::operator* (const BigNumber& rhs) const
+BigNumber& BigNumber::operator-= (const BigNumber& rhs)
 {
     Q_UNUSED(rhs);
-    throw Exception(QCoreApplication::tr("Operator * is not implemented is base class BigNumber."));
-    return BigNumber();
+    throw Exception(QCoreApplication::tr("Operator -= is not implemented is base class BigNumber."));
+    return *this;
 }
 
-BigNumber BigNumber::operator/ (const BigNumber& rhs) const
+BigNumber BigNumber::operator* (BigNumber rhs) const
+{
+    return rhs *= *this;
+}
+
+BigNumber& BigNumber::operator*= (const BigNumber& rhs)
 {
     Q_UNUSED(rhs);
-    throw Exception(QCoreApplication::tr("Operator / is not implemented is base class BigNumber."));
-    return BigNumber();
+    throw Exception(QCoreApplication::tr("Operator *= is not implemented is base class BigNumber."));
+    return *this;
+}
+
+BigNumber BigNumber::operator/ (BigNumber rhs) const
+{
+    return rhs /= *this;
+}
+
+BigNumber& BigNumber::operator/= (const BigNumber& rhs)
+{
+    Q_UNUSED(rhs);
+    throw Exception(QCoreApplication::tr("Operator /= is not implemented is base class BigNumber."));
+    return *this;
 }
 
 } // MathTools
