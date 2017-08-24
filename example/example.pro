@@ -15,6 +15,10 @@ OBJECTS_DIR = $$PWD/build/.o
 SOURCES = \
     src/main.cpp
 
+isEmpty($$PREFIX) {
+    PREFIX = $$PWD/../
+}
+
 INCLUDEPATH += \
     $$PREFIX/include
 

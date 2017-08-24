@@ -21,6 +21,10 @@ PUB_HEADERS = \
 HEADERS = \
     $$PUB_HEADERS
 
+isEmpty($$PREFIX) {
+    PREFIX = $$PWD
+}
+
 # installs
 target.path = $$PREFIX/lib
 

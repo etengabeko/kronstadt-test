@@ -17,6 +17,10 @@ MOC_DIR = $$PWD/build/.moc
 SOURCES = \
     src/main.cpp
 
+isEmpty($$PREFIX) {
+    PREFIX = $$PWD/../
+}
+
 INCLUDEPATH += \
     $$PREFIX/include
 
